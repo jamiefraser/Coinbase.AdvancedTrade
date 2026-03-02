@@ -3,6 +3,11 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+# Sensitive credential files - NEVER commit these
+**/appsettings.test.json
+**/local.settings.json
+*.credentials.json
+
 # User-specific files
 *.rsuser
 *.suo

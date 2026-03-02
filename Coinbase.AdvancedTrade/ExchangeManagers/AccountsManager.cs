@@ -56,5 +56,39 @@ namespace Coinbase.AdvancedTrade.ExchangeManagers
                 throw new InvalidOperationException($"Failed to get account with UUID {accountUuid}", ex);
             }
         }
+
+        /// <inheritdoc/>
+        public async Task<ServerTime> GetServerTimeAsync()
+        {
+            try
+            {
+                var response = await _authenticator.SendAuthenticatedRequestAsync("GET", "/api/v3/brokerage/time") ?? new Dictionary<string, object>();
+
+                // The time endpoint returns data at root level, so we serialize the whole response
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(response);
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<ServerTime>(json);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Failed to get server time", ex);
+            }
+        }
+
+        /// <inheritdoc/>
+        public async Task<ApiKeyPermissions> GetApiKeyPermissionsAsync()
+        {
+            try
+            {
+                var response = await _authenticator.SendAuthenticatedRequestAsync("GET", "/api/v3/brokerage/key_permissions") ?? new Dictionary<string, object>();
+
+                // The key_permissions endpoint returns data at root level
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(response);
+                return Newtonsoft.Json.JsonConvert.DeserializeObject<ApiKeyPermissions>(json);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Failed to get API key permissions", ex);
+            }
+        }
     }
 }

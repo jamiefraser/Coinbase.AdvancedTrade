@@ -5,6 +5,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Coinbase.AdvancedTrade.Enums;
+using Coinbase.AdvancedTrade.Logging;
+using Coinbase.AdvancedTrade.Models;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using RestSharp;
 
@@ -14,7 +17,7 @@ namespace Coinbase.AdvancedTrade
     /// Represents an authenticator for Coinbase API requests.
     /// This class is responsible for generating appropriate headers and ensuring authenticated communication with the Coinbase API.
     /// </summary>
-    public sealed class CoinbaseAuthenticator
+    public class CoinbaseAuthenticator
     {
         private readonly RestClient _client;
         private readonly string _apiKey;
@@ -22,7 +25,25 @@ namespace Coinbase.AdvancedTrade
         private readonly string _oAuth2AccessToken;
         private readonly bool _useOAuth;
         private ApiKeyType _apiKeyType;
+        private readonly ILogger _logger;
         private const string _apiUrl = "https://api.coinbase.com";
+
+        /// <summary>
+        /// Gets the most recent rate limit information from API responses.
+        /// </summary>
+        public RateLimitInfo LastRateLimitInfo { get; private set; }
+
+        /// <summary>
+        /// Gets whether to respect rate limits and apply backpressure.
+        /// Default: true.
+        /// </summary>
+        public bool RespectRateLimit { get; set; } = true;
+
+        /// <summary>
+        /// Gets or sets the maximum time to wait for rate limit reset (in seconds).
+        /// Default: 30 seconds.
+        /// </summary>
+        public double MaxRateLimitWaitSeconds { get; set; } = 30.0;
 
         /// <summary>
         /// Gets the API key used for Coinbase authentication.
@@ -40,11 +61,13 @@ namespace Coinbase.AdvancedTrade
         /// <param name="apiKey">The API key for Coinbase authentication.</param>
         /// <param name="apiSecret">The API secret for Coinbase authentication.</param>
         /// <param name="apiKeyType">The type of API key, CoinbaseDeveloperPlatform or Legacy (deprecated).</param>
-        public CoinbaseAuthenticator(string apiKey, string apiSecret, ApiKeyType apiKeyType = ApiKeyType.CoinbaseDeveloperPlatform)
+        /// <param name="logger">Optional logger for structured logging with correlation IDs.</param>
+        public CoinbaseAuthenticator(string apiKey, string apiSecret, ApiKeyType apiKeyType = ApiKeyType.CoinbaseDeveloperPlatform, ILogger logger = null)
         {
             _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey), "API key cannot be null.");
             _apiSecret = apiSecret ?? throw new ArgumentNullException(nameof(apiSecret), "API secret cannot be null.");
             _apiKeyType = apiKeyType;
+            _logger = logger ?? new NullLogger();
             _client = new RestClient(_apiUrl);
             _useOAuth = false;
         }
@@ -53,9 +76,11 @@ namespace Coinbase.AdvancedTrade
         /// Initializes a new instance of the <see cref="CoinbaseAuthenticator"/> class using OAuth2 access token.
         /// </summary>
         /// <param name="oAuth2AccessToken">The OAuth2 access token for Coinbase authentication.</param>
-        public CoinbaseAuthenticator(string oAuth2AccessToken)
+        /// <param name="logger">Optional logger for structured logging with correlation IDs.</param>
+        public CoinbaseAuthenticator(string oAuth2AccessToken, ILogger logger = null)
         {
             _oAuth2AccessToken = oAuth2AccessToken ?? throw new ArgumentNullException(nameof(oAuth2AccessToken), "OAuth2 access token cannot be null.");
+            _logger = logger ?? new NullLogger();
             _client = new RestClient(_apiUrl);
             _useOAuth = true;
         }
@@ -68,7 +93,7 @@ namespace Coinbase.AdvancedTrade
         /// <param name="queryParams">Optional query parameters to append to the request.</param>
         /// <param name="bodyObj">Optional body object to be sent with the request.</param>
         /// <returns>A Task representing the asynchronous operation, which upon completion returns a dictionary containing the response, or null if the response content is empty or invalid.</returns>
-        public async Task<Dictionary<string, object>> SendAuthenticatedRequestAsync(string method, string path, Dictionary<string, string> queryParams = null, object bodyObj = null)
+        public virtual async Task<Dictionary<string, object>> SendAuthenticatedRequestAsync(string method, string path, Dictionary<string, string> queryParams = null, object bodyObj = null)
         {
             // Validate the 'method' parameter for null or empty values
             if (string.IsNullOrEmpty(method))
@@ -81,6 +106,9 @@ namespace Coinbase.AdvancedTrade
             {
                 throw new ArgumentException("Invalid method type", nameof(method));
             }
+
+            // Apply rate limit backpressure before making the request
+            await MaybeWaitForRateLimitAsync();
 
             // Generate headers required for the authenticated request
             var headers = _useOAuth ? CreateOAuth2Headers() : CreateHeaders(method, path, bodyObj);
@@ -127,45 +155,179 @@ namespace Coinbase.AdvancedTrade
         /// <returns>A Task representing the asynchronous operation, which upon completion returns a dictionary representation of the response content, or null if the content is empty or only consists of white-space characters.</returns>
         private async Task<Dictionary<string, object>> ExecuteRequestAsync(string method, string path, object bodyObj, Dictionary<string, string> headers, Dictionary<string, string> queryParams)
         {
-            try
+            var correlationId = CorrelationIdContext.GetOrCreate();
+            using (_logger.BeginScope(new { CorrelationId = correlationId }))
             {
-                // Create a new request object with the specified method and path
-                if (!Enum.TryParse<Method>(method, ignoreCase: true, out var httpMethod))
+                try
                 {
-                    throw new ArgumentException($"Invalid method '{method}'.", nameof(method));
-                }
+                    _logger.LogDebug(
+                        "Executing authenticated request: Method={Method}, Path={Path}, CorrelationId={CorrelationId}",
+                        method, path, correlationId);
 
-                var request = new RestRequest(path, httpMethod);
-
-                // Add headers to the request
-                foreach (var header in headers)
-                {
-                    request.AddHeader(header.Key, header.Value);
-                }
-
-                // Add query parameters if provided
-                if (queryParams != null)
-                {
-                    foreach (var param in queryParams)
+                    // Create a new request object with the specified method and path
+                    if (!Enum.TryParse<Method>(method, ignoreCase: true, out var httpMethod))
                     {
-                        request.AddParameter(param.Key, param.Value);
+                        throw new ArgumentException($"Invalid method '{method}'.", nameof(method));
+                    }
+
+                    var request = new RestRequest(path, httpMethod);
+
+                    // Add headers to the request
+                    foreach (var header in headers)
+                    {
+                        request.AddHeader(header.Key, header.Value);
+                    }
+
+                    // Add correlation ID header for server-side tracing
+                    request.AddHeader("X-Correlation-ID", correlationId);
+
+                    // Add query parameters if provided
+                    if (queryParams != null)
+                    {
+                        foreach (var param in queryParams)
+                        {
+                            request.AddParameter(param.Key, param.Value);
+                        }
+                    }
+
+                    // Serialize and add the body if provided
+                    if (bodyObj != null)
+                    {
+                        request.AddJsonBody(JsonConvert.SerializeObject(bodyObj));
+                    }
+
+                    // Execute the request
+                    var response = await _client.ExecuteAsync(request); // Using the async version of Execute
+
+                    _logger.LogDebug(
+                        "Received response for {Method} {Path}: StatusCode={StatusCode}, CorrelationId={CorrelationId}",
+                        method, path, response?.StatusCode, correlationId);
+
+                    // Extract and store rate limit information from response headers
+                    ExtractRateLimitInfo(response);
+
+                    return HandleResponse(response);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Error executing authenticated request: Method={Method}, Path={Path}, CorrelationId={CorrelationId}",
+                        method, path, correlationId);
+                    throw new InvalidOperationException($"An error occurred while executing the request for {path}.", ex);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Waits if rate limit is exhausted before making a request.
+        /// Implements backpressure to avoid hitting rate limits.
+        /// </summary>
+        private async Task MaybeWaitForRateLimitAsync()
+        {
+            if (!RespectRateLimit || LastRateLimitInfo == null)
+            {
+                return;
+            }
+
+            if (LastRateLimitInfo.Remaining > 0)
+            {
+                return;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            if (LastRateLimitInfo.ResetAt <= now)
+            {
+                return;
+            }
+
+            var waitSeconds = (LastRateLimitInfo.ResetAt - now).TotalSeconds;
+            if (MaxRateLimitWaitSeconds > 0)
+            {
+                waitSeconds = Math.Min(waitSeconds, MaxRateLimitWaitSeconds);
+            }
+
+            if (waitSeconds > 0)
+            {
+                var correlationId = CorrelationIdContext.GetOrCreate();
+                using (_logger.BeginScope(new { CorrelationId = correlationId }))
+                {
+                    _logger.LogWarning(
+                        "Rate limit exhausted. Implementing backpressure: WaitSeconds={WaitSeconds}, ResetAt={ResetAt}, CorrelationId={CorrelationId}",
+                        waitSeconds, LastRateLimitInfo.ResetAt, correlationId);
+
+                    await Task.Delay(TimeSpan.FromSeconds(waitSeconds));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Extracts rate limit information from response headers.
+        /// </summary>
+        /// <param name="response">The REST response.</param>
+        private void ExtractRateLimitInfo(RestResponse response)
+        {
+            if (response?.Headers == null)
+            {
+                return;
+            }
+
+            int? limit = null;
+            int? remaining = null;
+            DateTimeOffset? resetAt = null;
+
+            foreach (var header in response.Headers)
+            {
+                if (header.Name == null || header.Value == null)
+                {
+                    continue;
+                }
+
+                var headerName = header.Name;
+                var headerValue = header.Value.ToString();
+
+                // Parse rate limit headers
+                if (headerName.Equals("RateLimit-Limit", StringComparison.OrdinalIgnoreCase) ||
+                    headerName.Equals("X-RateLimit-Limit", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(headerValue, out var parsedLimit))
+                    {
+                        limit = parsedLimit;
                     }
                 }
-
-                // Serialize and add the body if provided
-                if (bodyObj != null)
+                else if (headerName.Equals("RateLimit-Remaining", StringComparison.OrdinalIgnoreCase) ||
+                         headerName.Equals("X-RateLimit-Remaining", StringComparison.OrdinalIgnoreCase))
                 {
-                    request.AddJsonBody(JsonConvert.SerializeObject(bodyObj));
+                    if (int.TryParse(headerValue, out var parsedRemaining))
+                    {
+                        remaining = parsedRemaining;
+                    }
                 }
-
-                // Execute the request
-                var response = await _client.ExecuteAsync(request); // Using the async version of Execute
-
-                return HandleResponse(response);
+                else if (headerName.Equals("RateLimit-Reset", StringComparison.OrdinalIgnoreCase) ||
+                         headerName.Equals("X-RateLimit-Reset", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Try parsing as Unix timestamp (seconds)
+                    if (long.TryParse(headerValue, out var unixSeconds))
+                    {
+                        resetAt = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+                    }
+                    // Try parsing as ISO 8601 date
+                    else if (DateTimeOffset.TryParse(headerValue, out var parsedDate))
+                    {
+                        resetAt = parsedDate;
+                    }
+                }
             }
-            catch (Exception ex)
+
+            // Update rate limit info if we got all required values
+            if (limit.HasValue && remaining.HasValue && resetAt.HasValue)
             {
-                throw new InvalidOperationException("An error occurred while executing the request.", ex);
+                LastRateLimitInfo = new RateLimitInfo
+                {
+                    Limit = limit.Value,
+                    Remaining = remaining.Value,
+                    ResetAt = resetAt.Value
+                };
             }
         }
 

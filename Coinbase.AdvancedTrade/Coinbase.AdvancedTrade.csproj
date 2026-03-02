@@ -12,13 +12,22 @@
 	<Version>1.4</Version>
 	<Description>An unofficial Coinbase API Wrapper</Description>
 	<GenerateDocumentationFile>True</GenerateDocumentationFile>
+  </PropertyGroup>
 
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <LangVersion>9.0</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net48' OR '$(TargetFramework)' == 'netstandard2.0'">
+    <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.3.1" />
     <PackageReference Include="jose-jwt" Version="5.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Polly" Version="7.2.4" />
     <PackageReference Include="RestSharp" Version="111.0.0" />
   </ItemGroup>
 

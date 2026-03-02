@@ -18,9 +18,9 @@ namespace Coinbase.AdvancedTradeTest
         public void Setup()
         {
             // Setup for authenticated client
-            var apiKey = Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_KEY", EnvironmentVariableTarget.User)
+            var apiKey = System.Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_KEY", EnvironmentVariableTarget.User)
                          ?? throw new InvalidOperationException("API Key not found");
-            var apiSecret = Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_SECRET", EnvironmentVariableTarget.User)
+            var apiSecret = System.Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_SECRET", EnvironmentVariableTarget.User)
                            ?? throw new InvalidOperationException("API Secret not found");
             _coinbaseClient = new CoinbaseClient(apiKey, apiSecret);
 

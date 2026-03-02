@@ -1,0 +1,6 @@
+{
+  "Coinbase": {
+    "ApiKey": "organizations/{org_id}/apiKeys/{key_id}",
+    "ApiSecret": "-----BEGIN EC PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END EC PRIVATE KEY-----\n"
+  }
+}

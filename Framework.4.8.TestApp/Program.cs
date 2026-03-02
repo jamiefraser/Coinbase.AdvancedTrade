@@ -14,9 +14,9 @@ namespace Framework._4._8.TestApp
         static async Task Main(string[] args)
         {
             // Coinbase Developer Platform Keys
-            var apiKey = Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_KEY", EnvironmentVariableTarget.User)
+            var apiKey = System.Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_KEY", EnvironmentVariableTarget.User)
                          ?? throw new InvalidOperationException("API Key not found");
-            var apiSecret = Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_SECRET", EnvironmentVariableTarget.User)
+            var apiSecret = System.Environment.GetEnvironmentVariable("COINBASE_CLOUD_TRADING_API_SECRET", EnvironmentVariableTarget.User)
                            ?? throw new InvalidOperationException("API Secret not found");
             coinbaseClient = new CoinbaseClient(apiKey, apiSecret);
 
