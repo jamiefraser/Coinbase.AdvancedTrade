@@ -17,8 +17,12 @@ namespace Coinbase.AdvancedTradeTest
         public void Setup()
         {
             // Setup for OAuth2 authenticated client
-            var oAuth2Token = System.Environment.GetEnvironmentVariable("COINBASE_OAUTH2_TOKEN", EnvironmentVariableTarget.User)
-             ?? throw new InvalidOperationException("COINBASE_OAUTH2_TOKEN not found");
+            var oAuth2Token = System.Environment.GetEnvironmentVariable("COINBASE_OAUTH2_TOKEN", EnvironmentVariableTarget.User);
+            if (string.IsNullOrWhiteSpace(oAuth2Token))
+            {
+                Assert.Inconclusive("Integration test skipped: COINBASE_OAUTH2_TOKEN is not configured.");
+                return;
+            }
 
             _coinbaseClient = new CoinbaseOauth2Client(oAuth2Token);
         }
