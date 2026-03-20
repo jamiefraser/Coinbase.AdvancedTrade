@@ -38,4 +38,11 @@
     </None>
   </ItemGroup>
 
+  <!-- Allow AURA.Tests to access internal members for unit testing HandleResponse -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>AURA.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

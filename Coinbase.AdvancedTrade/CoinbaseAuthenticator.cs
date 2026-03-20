@@ -333,10 +333,14 @@ namespace Coinbase.AdvancedTrade
 
         /// <summary>
         /// Parses and returns the response content as a dictionary.
+        /// Throws <see cref="Exceptions.CoinbaseApiException"/> for any non-2xx HTTP status code
+        /// so callers receive a clear, actionable exception instead of silently operating on
+        /// Coinbase error JSON (e.g. {"error":"UNAUTHORIZED"}) as if it were valid data.
         /// </summary>
         /// <param name="response">The response received from a REST request.</param>
         /// <returns>A dictionary representation of the response content, or null if the content is empty or only consists of white-space characters.</returns>
-        private static Dictionary<string, object> HandleResponse(RestResponse response)
+        /// <exception cref="Exceptions.CoinbaseApiException">Thrown when the API returns a non-2xx status code.</exception>
+        internal static Dictionary<string, object> HandleResponse(RestResponse response)
         {
             // Check if the response content is empty or just white-space
             if (string.IsNullOrWhiteSpace(response.Content))
@@ -344,8 +348,52 @@ namespace Coinbase.AdvancedTrade
                 return null;
             }
 
+            // Surface API errors instead of treating them as valid response data.
+            // Previously, error bodies like {"error":"UNAUTHORIZED","message":"..."} were
+            // silently deserialized and callers received a dict without the expected keys
+            // (e.g. "accounts", "products"), returning null or empty results with no log trail.
+            // Check the numeric status code directly rather than response.IsSuccessful so that
+            // the check is independent of RestSharp's internal ResponseStatus state.
+            var httpStatus = (int)response.StatusCode;
+            if (httpStatus < 200 || httpStatus > 299)
+            {
+                var (errorCode, message, errorDetails) = TryParseErrorResponse(response.Content);
+                throw new Exceptions.CoinbaseApiException(
+                    response.StatusCode,
+                    message ?? $"Coinbase API returned {(int)response.StatusCode} ({response.StatusCode})",
+                    errorCode,
+                    errorDetails,
+                    response.Content);
+            }
+
             // Deserialize the content into a dictionary
             return JsonConvert.DeserializeObject<Dictionary<string, object>>(response.Content);
+        }
+
+        /// <summary>
+        /// Attempts to extract the Coinbase error fields from a non-2xx response body.
+        /// Coinbase error responses typically have the shape:
+        ///   {"error":"UNAUTHORIZED","message":"...","error_details":"...","preview_failure_reason":"..."}
+        /// Returns null fields if the body cannot be parsed.
+        /// </summary>
+        private static (string errorCode, string message, string errorDetails) TryParseErrorResponse(string content)
+        {
+            try
+            {
+                var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
+                if (dict == null) return (null, null, null);
+
+                var errorCode    = dict.TryGetValue("error",          out var e)  ? e?.ToString() : null;
+                var message      = dict.TryGetValue("message",        out var m)  ? m?.ToString() : null;
+                var errorDetails = dict.TryGetValue("error_details",  out var d)  ? d?.ToString()
+                                 : dict.TryGetValue("preview_failure_reason", out var p) ? p?.ToString() : null;
+
+                return (errorCode, message ?? errorCode, errorDetails);
+            }
+            catch
+            {
+                return (null, null, null);
+            }
         }
 
         /// <summary>
