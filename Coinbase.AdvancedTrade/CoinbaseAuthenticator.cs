@@ -68,7 +68,9 @@ namespace Coinbase.AdvancedTrade
             _apiSecret = apiSecret ?? throw new ArgumentNullException(nameof(apiSecret), "API secret cannot be null.");
             _apiKeyType = apiKeyType;
             _logger = logger ?? new NullLogger();
-            _client = new RestClient(_apiUrl);
+            // GAP-INF-01: hard 10-second timeout on all REST calls; prevents indefinite hangs
+            // when the Coinbase API connects but never sends a response byte.
+            _client = new RestClient(new RestClientOptions(_apiUrl) { MaxTimeout = 10_000 });
             _useOAuth = false;
         }
 
@@ -81,7 +83,8 @@ namespace Coinbase.AdvancedTrade
         {
             _oAuth2AccessToken = oAuth2AccessToken ?? throw new ArgumentNullException(nameof(oAuth2AccessToken), "OAuth2 access token cannot be null.");
             _logger = logger ?? new NullLogger();
-            _client = new RestClient(_apiUrl);
+            // GAP-INF-01: hard 10-second timeout on all REST calls (see API-key constructor above).
+            _client = new RestClient(new RestClientOptions(_apiUrl) { MaxTimeout = 10_000 });
             _useOAuth = true;
         }
 
